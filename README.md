@@ -1,21 +1,21 @@
-## Deploy IBP onto OpenShift
+## Deploy IBP onto Kubernetes
 
 ### Clone this repo and make the tool executable
 
 ```
-git clone https://github.com/litong01/ibponopenshift.git
-cd ibponopenshift && chmod +x ibptool.sh 
+git clone https://github.com/litong01/ibponk8s.git
+cd ibponk8s && chmod +x ibptool.sh 
 ```
 
 ### Modify mysettings.sh file with your own settings
 
-### Start up IBP on OpenShift
+### Start up IBP on Kubernetes
 
 ```
 ./ibptool.sh up
 ```
 
-### Remove IBP from OpenShift
+### Remove IBP from Kubernetes
 ```
 ./ibptool.sh down
 ```
