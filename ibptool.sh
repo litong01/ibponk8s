@@ -301,7 +301,7 @@ function ibpup() {
 
   echo "4. Apply ClusterRoleBinding"
   remove "ClusterRoleBinding ibpclusterrolebinding -n $PROJECT_NAME"
-  echo "$ibpclusterrolebinding" | oc apply -f /dev/stdin
+  echo "$ibpclusterrolebinding" | kubectl apply -f /dev/stdin
   sleep 3
 
   echo "5. Create secret for entitlement"
