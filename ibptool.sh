@@ -6,41 +6,37 @@
 #
 
 function dovars() {
-read -d '' ibpscc << EOF || true
-allowHostDirVolumePlugin: true
-allowHostIPC: true
-allowHostNetwork: true
-allowHostPID: true
-allowHostPorts: true
-allowPrivilegeEscalation: true
-allowPrivilegedContainer: true
-allowedCapabilities:
-- NET_BIND_SERVICE
-- CHOWN
-- DAC_OVERRIDE
-- SETGID
-- SETUID
-- FOWNER
-apiVersion: security.openshift.io/v1
-defaultAddCapabilities: null
-fsGroup:
-  type: RunAsAny
-groups:
-- system:cluster-admins
-- system:authenticated
-kind: SecurityContextConstraints
+read -d '' ibppsp << EOF || true
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
 metadata:
-  name: ibpscc
-readOnlyRootFilesystem: false
-requiredDropCapabilities: null
-runAsUser:
-  type: RunAsAny
-seLinuxContext:
-  type: RunAsAny
-supplementalGroups:
-  type: RunAsAny
-volumes:
-- "*"
+  name: ibm-blockchain-platform-psp
+spec:
+  hostIPC: false
+  hostNetwork: false
+  hostPID: false
+  privileged: true
+  allowPrivilegeEscalation: true
+  readOnlyRootFilesystem: false
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    rule: RunAsAny
+  runAsUser:
+    rule: RunAsAny
+  fsGroup:
+    rule: RunAsAny
+  requiredDropCapabilities:
+  - ALL
+  allowedCapabilities:
+  - NET_BIND_SERVICE
+  - CHOWN
+  - DAC_OVERRIDE
+  - SETGID
+  - SETUID
+  - FOWNER
+  volumes:
+  - '*'
 EOF
 
 read -d '' ibpclusterrole << EOF || true
@@ -51,13 +47,13 @@ metadata:
   name: ibpclusterrole
 rules:
 - apiGroups:
-  - apiextensions.k8s.io
+  - extensions
+  resourceNames:
+  - ibm-blockchain-platform-psp
   resources:
-  - persistentvolumeclaims
-  - persistentvolumes
-  - customresourcedefinitions
+  - podsecuritypolicies
   verbs:
-  - '*'
+  - use
 - apiGroups:
   - "*"
   resources:
@@ -74,41 +70,16 @@ rules:
   - rolebindings
   - serviceaccounts
   - nodes
-  - routes
-  - routes/custom-host
   verbs:
   - '*'
 - apiGroups:
-  - ""
+  - apiextensions.k8s.io
   resources:
-  - namespaces
-  - nodes
-  verbs:
-  - get
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - daemonsets
-  - replicasets
-  - statefulsets
+  - persistentvolumeclaims
+  - persistentvolumes
+  - customresourcedefinitions
   verbs:
   - '*'
-- apiGroups:
-  - monitoring.coreos.com
-  resources:
-  - servicemonitors
-  verbs:
-  - get
-  - create
-- apiGroups:
-  - apps
-  resourceNames:
-  - ibp-operator
-  resources:
-  - deployments/finalizers
-  verbs:
-  - update
 - apiGroups:
   - ibp.com
   resources:
@@ -127,9 +98,12 @@ rules:
   verbs:
   - '*'
 - apiGroups:
-  - config.openshift.io
+  - apps
   resources:
-  - '*'
+  - deployments
+  - daemonsets
+  - replicasets
+  - statefulsets
   verbs:
   - '*'
 EOF
@@ -238,7 +212,7 @@ spec:
             - name: OPERATOR_NAME
               value: "ibp-operator"
             - name: CLUSTERTYPE
-              value: OPENSHIFT
+              value: IKS
           resources:
             requests:
               cpu: 100m
@@ -303,50 +277,45 @@ function printHelp() {
 }
 
 function remove() {
-  res=$(oc get $1 --no-headers 2>/dev/null || true)
+  res=$(kubectl get $1 --no-headers 2>/dev/null || true)
   if [[ ! -z "$res" ]]; then
-    oc delete $1 >/dev/null 2>&1
+    kubectl delete $1 >/dev/null 2>&1
     sleep 3
   fi
 }
 
 function ibpup() {
-  echo "1. Create os project"
+  echo "1. Create kubenetes namespace"
   remove "Namespace $PROJECT_NAME"
-  oc create namespace $PROJECT_NAME
+  kubectl create namespace $PROJECT_NAME
 
-  echo "2. Apply the security context constraint"
-  remove "SecurityContextConstraints ibpscc"
-  echo "$ibpscc" | oc apply -f /dev/stdin
+  echo "2. Apply PodSecurityPolicy"
+  remove "PodSecurityPolicy ibppsc"
+  echo "$ibppsp" | kubectl apply -f /dev/stdin
   sleep 3
 
-  echo "3. Add security context constraint to user"
-  oc adm policy add-scc-to-user ibpscc system:serviceaccounts:$PROJECT_NAME
-  oc adm policy add-scc-to-group ibpscc system:serviceaccounts:$PROJECT_NAME
-  sleep 3
-
-  echo "4. Apply ClusterRole"
+  echo "3. Apply ClusterRole"
   remove "ClusterRole ibpclusterrole"
-  echo "$ibpclusterrole" | oc apply -f /dev/stdin
+  echo "$ibpclusterrole" | kubectl apply -f /dev/stdin
   sleep 3
 
-  echo "5. Apply ClusterRoleBinding"
+  echo "4. Apply ClusterRoleBinding"
   remove "ClusterRoleBinding ibpclusterrolebinding -n $PROJECT_NAME"
   echo "$ibpclusterrolebinding" | oc apply -f /dev/stdin
   sleep 3
 
-  echo "6. Create secret for entitlement"
-  oc create secret docker-registry docker-key-secret \
+  echo "5. Create secret for entitlement"
+  kubectl create secret docker-registry docker-key-secret \
     --docker-server=$IMAGE_SERVER --docker-username=$EMAIL_ADDRESS \
     --docker-password=$ENTITLEMENT_KEY --docker-email=$EMAIL_ADDRESS \
     -n $PROJECT_NAME
 
-  echo "7. Deploy the operator"
-  echo "$ibpoperator" | oc apply -n $PROJECT_NAME -f /dev/stdin
+  echo "6. Deploy the operator"
+  echo "$ibpoperator" | kubectl apply -n $PROJECT_NAME -f /dev/stdin
   echo -e -n 'Waiting for IBP operator to be ready\e[32m.'
   while : ; do
     sleep 3
-    res=$(oc -n $PROJECT_NAME get pods | grep "^ibp-operator-" | grep "Running" | grep "1/1" || true)
+    res=$(kubectl -n $PROJECT_NAME get pods | grep "^ibp-operator-" | grep "Running" | grep "1/1" || true)
     if [[ ! -z $res ]]; then
       echo ''; echo -e 'IBP operator is now ready\e[0m'
       break
@@ -354,12 +323,12 @@ function ibpup() {
     echo -n '.'
   done
 
-  echo "8. Deploy the IBP Console"
-  echo "$ibpconsole" | oc apply -n $PROJECT_NAME -f /dev/stdin
+  echo "7. Deploy the IBP Console"
+  echo "$ibpconsole" | kubectl apply -n $PROJECT_NAME -f /dev/stdin
   echo -e -n 'Waiting for IBP console to be ready\e[32m.'
   while : ; do
     sleep 3
-    res=$(oc -n $PROJECT_NAME get pods | grep "^ibpconsole-" | grep "Running" | grep "4/4" || true)
+    res=$(kubectl -n $PROJECT_NAME get pods | grep "^ibpconsole-" | grep "Running" | grep "4/4" || true)
     if [[ ! -z $res ]]; then
       echo ''; echo -e 'IBP Console is now ready\e[0m'
       break
@@ -369,7 +338,7 @@ function ibpup() {
 
   echo ""
   echo -e "\e[32mAccess IBP Console at the following address:\e[0m"
-  echo -e "\e[32mhttps://$PROJECT_NAME-ibpconsole-console.$DOMAIN_URL\e[0m"
+  echo -e "\e[32mhttps://$PROJECT_NAME-ibpconsole-console.$DOMAIN_URL:443\e[0m"
   echo ""
 }
 
@@ -381,8 +350,8 @@ function ibpdown() {
   remove "ClusterRoleBinding ibpclusterrolebinding"
   remove "ClusterRole ibpclusterrole"
 
-  echo "3. Remove SecurityContextConstraints"
-  remove "SecurityContextConstraints ibpscc"
+  echo "3. Remove PodSecurityPolicy"
+  remove "PodSecurityPolicy ibppsp"
 }
 
 MODE=$1
